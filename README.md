@@ -6,6 +6,7 @@
 
 **适用系统**：Debian 11+ / Ubuntu 20.04+（apt 系）
 **预计耗时**：最小必做路径约 30 分钟，全部做完约 1 小时
+**实测环境**：Ubuntu 24.04 LTS（KVM，1 核 / 1G 内存），本地为 Windows 10，2026 年 10 月完整走通全流程。Debian 部分按系统机制编写，暂未完整实测；在其他系统或商家上遇到不一致的地方，欢迎提 [Issue](https://github.com/kungen1008/vps-setup/issues)。
 
 ---
 
@@ -120,7 +121,11 @@ ssh root@你的IP -p 22
 > 端口不是 22 的，把 `22` 换成你自己的，后文同理。
 
 - **指纹确认**：第一次连接会问你认不认这台机器的「身份证」。商家如果在面板里公布了主机指纹，花一分钟核对再输 `yes`；没公布的，第一次也只能先信。
+- **核对要快**：服务器只给每个新连接约 2 分钟完成登录（`LoginGraceTime`）。核对指纹花太久，输完 `yes` 会看到 `Connection closed by ... port 22`。指纹已经保存了，**直接重连一次**就行。
 - **输密码时屏幕上没有任何显示**，不是键盘坏了，输完直接回车。
+
+> [!TIP]
+> 以后用新电脑或新客户端（比如 Windows 自带的 `ssh`）第一次连这台机器，也会再问一次指纹。想核对的话，在已登录的服务器窗口执行 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`，对比输出的 `SHA256:...` 是否一致。
 
 以后重装了系统，再连会跳一个大红警告 `HOST KEY CHANGED`。那是新系统的指纹和旧记录对不上，先清掉旧记录再连：
 
@@ -143,6 +148,33 @@ Host myvps
 ```
 
 之后 `ssh myvps` 就能连。端口、用户后面改了，回来改这两行就行。
+
+> [!WARNING]
+> **Windows 用户注意：记事本默认会把文件存成 `config.txt`**，ssh 读不到，会报 `Could not resolve hostname myvps`（中文系统可能显示成一串乱码，意思是“不知道这样的主机”）。
+>
+> 最稳的办法是在 PowerShell 里用命令直接写文件（`'@` 必须单独一行、顶格）：
+>
+> ```powershell
+> @'
+> Host myvps
+>     HostName 你的IP
+>     Port 22
+>     User root
+> '@ | Set-Content -Path $env:USERPROFILE\.ssh\config -Encoding ascii
+> ```
+>
+> 已经存成 `config.txt` 的，把扩展名删掉即可。`.ssh` 文件夹不存在的话，先执行 `mkdir $env:USERPROFILE\.ssh`。
+
+> [!IMPORTANT]
+> **看提示符，分清你在哪台机器上。**同一个 PowerShell 窗口，`ssh` 登录前后操作的是两台不同的机器：
+>
+> | 提示符 | 你在哪里 |
+> |---|---|
+> | `PS C:\Users\你的用户名>` | 自己的 Windows 电脑 |
+> | `用户名@主机名:~$` | 服务器（普通用户） |
+> | `root@主机名:~#` | 服务器（root） |
+>
+> 本文会标明命令在哪边执行。建议开两个窗口：一个 `ssh` 连进服务器，一个留在本地。
 
 ### 用图形客户端也一样
 
@@ -177,16 +209,47 @@ apt update && apt upgrade -y
 
 商家给的系统镜像往往是几个月前做的，已知漏洞全在，先补上。两个小插曲提前知道：
 
-- 弹出「配置文件被修改过」的对话框：选 **keep the local version**（保留当前版本）最稳。
-- 新版 Ubuntu 可能弹出全屏界面，问「要重启哪些服务」：直接回车用默认值。
+**① 弹出「配置文件被修改过」的对话框**
 
-装完检查要不要重启：
+最常见的是更新 `openssh-server` 时出现的这个：
+
+```
+A new version of configuration file /etc/ssh/sshd_config is available,
+but the version installed currently has been locally modified.
+
+    install the package maintainer's version
+  > keep the local version currently installed
+    show the differences between the versions
+    ...
+```
+
+选 **keep the local version currently installed**（保留当前版本），回车确认。
+
+原因：云镜像大多改过 `sshd_config`（比如端口、登录方式）。选第一项会被官方默认配置覆盖，万一商家改过端口，覆盖后可能就连不上了。本文第 8 步的加固写在单独的文件里，不改主配置，所以这里保留本地版本不会有任何冲突。
+
+**② 新版 Ubuntu 可能弹出全屏界面，问「要重启哪些服务」**：直接回车用默认值。
+
+**③ 装完检查要不要重启**
+
+更新结束时，Ubuntu 往往会在输出末尾提示：
+
+```
+Pending kernel upgrade!
+Running kernel version:
+  6.8.0-31-generic
+Diagnostics:
+  The currently running kernel version is not the expected kernel version 6.8.0-xxx-generic.
+```
+
+意思是新内核装好了，但要重启才能生效。下面这些也会一起出现，都不用处理，重启后自动解决：`os-prober will not be executed`、`Service restarts being deferred`、`User sessions running outdated binaries`。
+
+也可以用命令确认：
 
 ```bash
 ls /var/run/reboot-required
 ```
 
-文件存在就 `reboot`，等一分钟重连。
+文件存在就 `reboot`，等一两分钟重连，再用 `uname -r` 确认已经换成新内核版本。
 
 > [!NOTE]
 > 这个文件是 **Ubuntu** 的机制。Debian 默认不会生成它，所以**在 Debian 上「文件不存在」不代表不用重启**。简单判断：更新列表里出现了 `linux-image` 开头的包（内核更新），就直接 `reboot` 一次。
@@ -281,13 +344,15 @@ Host *
     UseKeychain yes   # 口令存进系统钥匙串，重启后也免重输
 ```
 
-**Windows**：ssh-agent 服务默认是禁用的，在**管理员 PowerShell** 里启用一次：
+**Windows**：ssh-agent 服务默认是禁用的，要用**管理员 PowerShell** 启用一次。按 `Win + X`，选「Windows PowerShell(管理员)」或「终端(管理员)」，窗口标题以「管理员:」开头就对了。执行：
 
 ```powershell
 Get-Service ssh-agent | Set-Service -StartupType Automatic
 Start-Service ssh-agent
 ssh-add
 ```
+
+`ssh-add` 会让你输一次私钥口令，看到 `Identity added` 就成功了。之后电脑重启 agent 也会自动启动、记住这把钥匙。这几行都在同一个管理员窗口执行即可，做完可以关掉它。
 
 ### 6.2 把公钥送上服务器
 
@@ -297,11 +362,13 @@ ssh-add
 ssh-copy-id -p 22 用户名@你的IP
 ```
 
-**Windows PowerShell**（效果一样）：
+**Windows PowerShell**（普通窗口即可，效果一样）：
 
 ```powershell
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh -p 22 用户名@你的IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh -p 22 用户名@你的IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
+
+会提示输入这个用户的**账号密码**，输完没有任何输出、直接回到提示符，就是成功了。因为是以该用户身份登录写入的，文件属主自然正确，权限也一步设好，不会遇到 6.3 说的问题。
 
 > [!NOTE]
 > 这两条能成功，是因为现在密码登录还开着。等第 8 步关掉密码登录后再想补公钥，就只能先用已有钥匙登录，或者走 VNC。
@@ -422,7 +489,16 @@ dpkg-reconfigure --priority=low unattended-upgrades
 
 ### 7.4 小内存机器加 swap（可选）
 
-内存 1G 及以下的机器，加一块交换空间兜底，免得内存一爆直接死机：
+内存 1G 及以下的机器，加一块交换空间兜底，免得内存一爆直接死机。
+
+**先检查是不是已经有了**，不少商家会预先配好 swap 分区或 swap 文件：
+
+```bash
+swapon --show
+```
+
+- **有输出**（比如 `/dev/vda3 partition 1G`）：已经有 swap，**整步跳过**。再加一个只会白占硬盘；
+- **没有输出**：继续往下做。
 
 ```bash
 fallocate -l 1G /swapfile
@@ -691,6 +767,35 @@ reboot
 ```
 
 重启后，**只用「新用户 + 密钥 +（新端口）」登录**，逐项检查。
+
+> [!WARNING]
+> **含 `sudo` 的多行命令不要整段粘贴。**第一条 `sudo` 停下来等密码时，后面粘贴进去的几行会被当成「密码」吞掉，表现为连续几次 `Sorry, try again`，后面的命令都没执行。
+>
+> 正确做法：先单独执行 `sudo -i` 输入密码切到 root，再粘贴不带 `sudo` 的命令；或者先单独执行一次 `sudo -v` 缓存密码。
+
+先单独执行：
+
+```bash
+sudo -i
+```
+
+提示符变成 `root@...#` 后，整段粘贴，一次跑完所有检查：
+
+```bash
+echo "== sshd ==";        sshd -T | grep -Ei '^(port|permitrootlogin|passwordauthentication|kbdinteractiveauthentication)'
+echo "== ufw ==";         ufw status
+echo "== 监听端口 ==";     ss -tlnp
+echo "== fail2ban ==";    fail2ban-client status sshd | head -4
+echo "== swap ==";        swapon --show
+echo "== BBR ==";         sysctl net.ipv4.tcp_congestion_control
+echo "== 主机名/时区 ==";  hostname; timedatectl | grep 'Time zone'
+echo "== 失败服务 ==";     systemctl --failed --no-legend
+echo "== 内核 ==";        uname -r
+```
+
+> `ss -tlnp` 里看到 `127.0.0.53` / `127.0.0.54` 的 53 端口是 Ubuntu 的本机 DNS（systemd-resolved），只监听本机地址，外部访问不到，可以忽略。`fail2ban` 的 `Total failed` 有几十次也正常，那是公网扫描器在试，全被拒了。
+
+对照下面的清单逐项打勾。
 
 **正向（应该成立）：**
 
